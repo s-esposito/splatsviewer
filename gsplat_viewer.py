@@ -25,6 +25,7 @@ Controls (orbit mode):
     W/A/S/D            : move camera
     Shift + move       : fast move
     R                  : reset camera
+    F12                : save screenshot to screenshot.png
 
 GUI panel:
     shader             : RGB | Depth (expected) | Depth (accumulated) | Weights | Alphas
@@ -35,6 +36,7 @@ GUI panel:
 import argparse
 import json
 import math
+import os
 import time
 import numpy as np
 import cv2
@@ -72,6 +74,7 @@ TAG_MAIN_WIN = "main_win"
 TAG_CANVAS_WIN = "canvas_win"
 TAG_FILE_DIALOG_PLY = "file_dialog_ply"
 TAG_FILE_DIALOG_CAMERAS = "file_dialog_cameras"
+TAG_FILE_DIALOG_SAVE = "file_dialog_save"
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +323,13 @@ class GsplatViewer:
             dpg.add_file_extension(".json", color=(0, 255, 0, 255))
             dpg.add_file_extension(".*")
 
+        with dpg.file_dialog(directory_selector=False, show=False,
+                             callback=self._on_save_selected,
+                             tag=TAG_FILE_DIALOG_SAVE,
+                             default_filename="render.png",
+                             width=700, height=400):
+            dpg.add_file_extension(".png", color=(0, 255, 0, 255))
+
         # main window
         with dpg.window(tag=TAG_MAIN_WIN, no_title_bar=True, no_close=True,
                         no_move=True, no_resize=True):
@@ -334,6 +344,8 @@ class GsplatViewer:
                                    callback=lambda: dpg.show_item(TAG_FILE_DIALOG_PLY))
                     dpg.add_button(label="Load Cameras...", width=-1,
                                    callback=lambda: dpg.show_item(TAG_FILE_DIALOG_CAMERAS))
+                    dpg.add_button(label="Save Screenshot...", width=-1,
+                                   callback=lambda: dpg.show_item(TAG_FILE_DIALOG_SAVE))
 
                     dpg.add_separator()
                     dpg.add_text("Render Parameters", color=(200, 200, 255))
@@ -456,6 +468,7 @@ class GsplatViewer:
                     dpg.add_text("Scroll: zoom", color=(140, 140, 140))
                     dpg.add_text("WASD: move", color=(140, 140, 140))
                     dpg.add_text("R: reset camera", color=(140, 140, 140))
+                    dpg.add_text("F12: quick screenshot", color=(140, 140, 140))
 
         dpg.set_primary_window(TAG_MAIN_WIN, True)
 
@@ -516,6 +529,8 @@ class GsplatViewer:
 
     def _handle_keyboard(self):
         """Poll keyboard state each frame for camera movement."""
+        if dpg.is_key_pressed(dpg.mvKey_F12):
+            self._save_screenshot("screenshot.png")
         if not self._using_orbit():
             return
         shift = dpg.is_key_down(dpg.mvKey_LShift) or dpg.is_key_down(dpg.mvKey_RShift)
@@ -593,6 +608,23 @@ class GsplatViewer:
 
         # update shader combo (add Weights if cameras loaded)
         self._update_shader_items()
+
+    def _on_save_selected(self, sender, app_data):
+        """Callback when a save path is selected from the file dialog."""
+        path = app_data.get("file_path_name", "")
+        if not path:
+            return
+        if not path.lower().endswith(".png"):
+            path += ".png"
+        self._save_screenshot(path)
+
+    def _save_screenshot(self, path: str):
+        """Save the current render buffer to a PNG file."""
+        image = self._tex_data.reshape(self.render_h, self.render_w, 3)
+        image_u8 = (np.clip(image, 0.0, 1.0) * 255).astype(np.uint8)
+        image_bgr = cv2.cvtColor(image_u8, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(path, image_bgr)
+        print(f"Screenshot saved to {path}")
 
     def _update_shader_items(self):
         """Refresh shader combo items based on current state."""

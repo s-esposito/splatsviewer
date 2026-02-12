@@ -4,6 +4,8 @@ Real-time Gaussian Splatting viewer using [gsplat](https://github.com/nerfstudio
 
 Loads standard 3DGS `.ply` files and renders them interactively on the GPU with an orbit camera and multiple visualization shaders.
 
+![screenshot](screenshot.png)
+
 ## Installation
 
 ### Prerequisites
@@ -50,39 +52,6 @@ python gsplat_viewer.py path/to/point_cloud.ply --width 1280 --height 720
 | `--cameras` | Path to a cameras JSON file | None |
 | `--width` | Render width in pixels | 1920 |
 | `--height` | Render height in pixels | 1080 |
-
-## Controls
-
-### Orbit camera
-
-| Input | Action |
-|---|---|
-| Left-click drag | Orbit |
-| Right-click drag | Pan |
-| Middle-click drag | Pan |
-| Scroll wheel | Zoom |
-| W / A / S / D | Move forward / left / backward / right |
-| Shift + WASD | Fast move |
-| R | Reset camera to default position |
-
-### GUI panel
-
-- **Load PLY** / **Load Cameras**: Load or replace files at runtime via file dialog
-- **Shader**: Select visualization mode
-  - `RGB` — standard color rendering (supports SH coefficients)
-  - `Depth (expected)` — expected depth heatmap
-  - `Depth (accumulated)` — accumulated depth heatmap
-  - `Weights` — per-Gaussian contribution heatmap (requires cameras)
-  - `Alphas` — accumulated per-pixel alpha heatmap
-- **Weight filtering** (visible when cameras are loaded):
-  - `ref camera` — reference camera for computing per-Gaussian contributions
-  - `filter by weight` — enable/disable filtering
-  - `keep` — keep Gaussians with High or Low contribution
-  - `threshold` — absolute weight threshold (range auto-adjusts)
-- **Render parameters**: `radius_clip`, `eps2d`, `sh_degree`, `rasterize_mode`, near/far plane
-- **Scale clipping**: min/max scale clamping with toggles and sliders
-- **Camera selector**: switch between orbit camera and loaded cameras
-- **Info**: FPS, resolution, total/visible/contributing Gaussian counts
 
 ## PLY format
 
