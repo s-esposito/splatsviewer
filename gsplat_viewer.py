@@ -75,6 +75,7 @@ TAG_CANVAS_WIN = "canvas_win"
 TAG_FILE_DIALOG_PLY = "file_dialog_ply"
 TAG_FILE_DIALOG_CAMERAS = "file_dialog_cameras"
 TAG_FILE_DIALOG_SAVE = "file_dialog_save"
+TAG_BG_COLOR = "color_bg"
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +127,9 @@ def load_ply(path: str, device: str = "cuda") -> dict:
             sh_coeffs = dc[:, np.newaxis, :]
             print(f"  SH degree 0 (DC only)")
 
+        # if dc > 1e10 or dc < -1e10:
+        #     print(f"  Warning: DC values have large magnitude, clamping for color display")
+        dc = np.clip(dc, -10.0, 10.0)
         colors = 1.0 / (1.0 + np.exp(-(SH_C0 * dc + 0.5)))
     elif "red" in prop_names:
         colors = np.stack([vtx["red"], vtx["green"], vtx["blue"]], axis=-1).astype(np.float32) / 255.0
@@ -170,7 +174,33 @@ def load_ply(path: str, device: str = "cuda") -> dict:
     else:
         print("  Warning: no opacity attribute, using 1.0")
         opacities = np.ones(n, dtype=np.float32)
+                
+    # filter out Gaussians with nans or infs in any attribute
+    valid_mask = np.ones(n, dtype=bool)
+    for arr in [means, colors, scales, quats, opacities]:
+        # check if any nan or inf values in the last axis (e.g. color channels) and mark the whole Gaussian as invalid if so
+        valid_mask &= np.isfinite(arr).all(axis=-1)
+    # print a warning if any invalid Gaussians were found and will be ignored
+    n_invalid = (~valid_mask).sum()
+    if n_invalid > 0:
+        print(f"  Warning: {n_invalid} Gaussians contain NaN or Inf values and will be ignored")
+        means = means[valid_mask]
+        colors = colors[valid_mask]
+        scales = scales[valid_mask]
+        quats = quats[valid_mask]
+        opacities = opacities[valid_mask]
+        if sh_coeffs is not None:
+            sh_coeffs = sh_coeffs[valid_mask]
 
+    if len(means) == 0:
+        print("  Warning: all Gaussians were filtered out, scene will be empty")
+    
+    # for each attribute, check if there are nan or inf values and print a warning if so
+    for name, arr in [("means", means), ("colors", colors), ("scales", scales),
+                        ("quats", quats), ("opacities", opacities)]:
+            if np.isnan(arr).any() or np.isinf(arr).any():
+                print(f"  Warning: {name} contains NaN or Inf values")
+    
     result = {
         "means": torch.from_numpy(means).to(device),
         "colors": torch.from_numpy(colors).to(device),
@@ -181,8 +211,8 @@ def load_ply(path: str, device: str = "cuda") -> dict:
         "sh_coeffs": torch.from_numpy(sh_coeffs).to(device) if sh_coeffs is not None else None,
     }
 
-    bmin = means.min(axis=0)
-    bmax = means.max(axis=0)
+    bmin = means.min(axis=0) if len(means) > 0 else np.array([0.0, 0.0, 0.0], dtype=np.float32)
+    bmax = means.max(axis=0) if len(means) > 0 else np.array([0.0, 0.0, 0.0], dtype=np.float32)
     center = (bmin + bmax) / 2.0
     extent = np.linalg.norm(bmax - bmin)
     print(f"  Bounds: [{bmin}] -> [{bmax}]")
@@ -413,6 +443,11 @@ class GsplatViewer:
                         label="rasterize_mode", tag=TAG_RASTERIZE_MODE,
                         items=["classic", "antialiased"],
                         default_value=self.render_params["rasterize_mode"], width=140,
+                    )
+                    dpg.add_color_edit(
+                        label="background", tag=TAG_BG_COLOR,
+                        default_value=(0, 0, 0, 255),
+                        no_alpha=True, width=140,
                     )
 
                     dpg.add_separator()
@@ -658,6 +693,12 @@ class GsplatViewer:
 
     # ---------- rendering ----------
 
+    def _get_background(self):
+        """Return the background color as a (3,) tensor from the GUI color picker."""
+        rgba = dpg.get_value(TAG_BG_COLOR)  # [R, G, B, A] ints 0-255
+        return torch.tensor([rgba[0] / 255.0, rgba[1] / 255.0, rgba[2] / 255.0],
+                            dtype=torch.float32, device=self.device)
+
     def _raster_kwargs(self, p):
         """Common kwargs for rasterization calls."""
         scales = self.gs["scales"]
@@ -674,6 +715,7 @@ class GsplatViewer:
             radius_clip=p["radius_clip"],
             eps2d=p["eps2d"],
             rasterize_mode=p["rasterize_mode"],
+            backgrounds=self._get_background(),
             width=self.render_w,
             height=self.render_h,
         )
@@ -724,6 +766,14 @@ class GsplatViewer:
     def render_frame(self):
         """Rasterize Gaussians and update the DearPyGui texture."""
         if self.gs is None:
+            return
+
+        if self.gs["means"].shape[0] == 0:
+            bg = self._get_background().cpu().numpy()
+            image = np.full((self.render_h, self.render_w, 3), bg, dtype=np.float32)
+            self._update_texture(image)
+            self._n_visible = 0
+            self._n_contributing = 0
             return
 
         cam_sel = dpg.get_value(TAG_CAMERA_SELECT)
