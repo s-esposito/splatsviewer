@@ -290,9 +290,10 @@ class GsplatViewer:
 
         max_sh = self.gs["max_sh_degree"] if self.gs is not None else -1
         default_sh = max_sh if max_sh >= 0 else None
+        self._default_sh = default_sh
 
-        # render parameters
-        self.render_params = {
+        # render parameters (also used as defaults for "Restore Defaults")
+        self._default_render_params = {
             "radius_clip": 0.0,
             "eps2d": 0.3,
             "sh_degree": default_sh,
@@ -300,6 +301,7 @@ class GsplatViewer:
             "near_plane": 0.01,
             "far_plane": 1000.0,
         }
+        self.render_params = dict(self._default_render_params)
 
         # camera
         if self.gs is not None:
@@ -421,12 +423,13 @@ class GsplatViewer:
                         label="radius_clip", tag=TAG_RADIUS_CLIP,
                         default_value=self.render_params["radius_clip"],
                         min_value=0.0, max_value=100.0, width=140,
+                        format="%.4f",
                     )
                     dpg.add_slider_float(
                         label="eps2d", tag=TAG_EPS2D,
                         default_value=self.render_params["eps2d"],
                         min_value=0.0, max_value=2.0, width=140,
-                        format="%.3f",
+                        format="%.4f",
                     )
 
                     if max_sh >= 0:
@@ -454,12 +457,12 @@ class GsplatViewer:
                     dpg.add_slider_float(
                         label="near (log10)", tag=TAG_NEAR_PLANE,
                         default_value=math.log10(max(self.render_params["near_plane"], 1e-6)),
-                        min_value=-3.0, max_value=2.0, width=140, format="%.2f",
+                        min_value=-3.0, max_value=2.0, width=140, format="%.4f",
                     )
                     dpg.add_slider_float(
                         label="far (log10)", tag=TAG_FAR_PLANE,
                         default_value=math.log10(max(self.render_params["far_plane"], 1.0)),
-                        min_value=1.0, max_value=6.0, width=140, format="%.2f",
+                        min_value=1.0, max_value=6.0, width=140, format="%.4f",
                     )
 
                     dpg.add_separator()
@@ -485,6 +488,10 @@ class GsplatViewer:
                         min_value=0.001, max_value=1.0,
                         width=140, format="%.4f",
                     )
+
+                    dpg.add_separator()
+                    dpg.add_button(label="Restore Defaults", width=-1,
+                                   callback=lambda: self._restore_defaults())
 
                     dpg.add_separator()
                     dpg.add_text("", tag=TAG_INFO_TEXT, color=(160, 160, 160))
@@ -673,6 +680,27 @@ class GsplatViewer:
 
     # ---------- GUI sync ----------
 
+    def _restore_defaults(self):
+        """Reset all render-parameter widgets to their initial values."""
+        d = self._default_render_params
+        dpg.set_value(TAG_SHADER, "RGB")
+        dpg.set_value(TAG_RADIUS_CLIP, d["radius_clip"])
+        dpg.set_value(TAG_EPS2D, d["eps2d"])
+        sh_str = str(d["sh_degree"]) if d["sh_degree"] is not None else "None"
+        dpg.set_value(TAG_SH_DEGREE, sh_str)
+        dpg.set_value(TAG_RASTERIZE_MODE, d["rasterize_mode"])
+        dpg.set_value(TAG_NEAR_PLANE, math.log10(max(d["near_plane"], 1e-6)))
+        dpg.set_value(TAG_FAR_PLANE, math.log10(max(d["far_plane"], 1.0)))
+        dpg.set_value(TAG_BG_COLOR, [0, 0, 0, 255])
+        dpg.set_value(TAG_SCALE_CLIP_MIN_ENABLE, False)
+        dpg.set_value(TAG_SCALE_CLIP_MIN_VALUE, 0.005)
+        dpg.set_value(TAG_SCALE_CLIP_MAX_ENABLE, False)
+        dpg.set_value(TAG_SCALE_CLIP_MAX_VALUE, 0.05)
+        dpg.set_value(TAG_WEIGHT_FILTER_ENABLE, False)
+        dpg.set_value(TAG_WEIGHT_FILTER_THRESH, 0.0)
+        dpg.set_value(TAG_WEIGHT_FILTER_MODE, "High")
+        dpg.set_value(TAG_CAMERA_SELECT, "Orbit")
+
     def _sync_params_from_gui(self):
         """Read GUI widget values into render_params."""
         self.render_params["shader"] = dpg.get_value(TAG_SHADER)
@@ -856,8 +884,10 @@ class GsplatViewer:
     def _render_depth(self, w2c_t, K_t, p, mode: str = "RGB+ED"):
         """Depth heatmap. mode='RGB+ED' for expected depth, 'RGB+D' for accumulated."""
         opacities = self._apply_weight_filter(self.gs["opacities"]).detach().clone().requires_grad_(True)
+        raster_kw = self._raster_kwargs(p)
+        raster_kw["backgrounds"] = None  # depth modes handle bg separately
         render_colors, render_alphas, meta = rasterization(
-            **self._raster_kwargs(p),
+            **raster_kw,
             opacities=opacities,
             colors=self.gs["colors"],
             viewmats=w2c_t, Ks=K_t,
